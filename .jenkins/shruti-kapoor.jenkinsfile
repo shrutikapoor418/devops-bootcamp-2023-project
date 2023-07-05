@@ -16,7 +16,7 @@ pipeleine{
                    - name:  shared-data
                      mountPath:  /mnt/shared-data
 
-                vulumes:
+                volumes:
                   - name:  dind-storage
                     emptyDir:  {}
                   - name:  shared-data
