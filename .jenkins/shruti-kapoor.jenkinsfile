@@ -3,13 +3,13 @@ pipeleine{
         kubernetes{
             yaml '''
 
-            ApiVersion: v1
-            kind:pod
+            apiVersion: v1
+            kind:Pod
             spec:
              containers:
                - name: aws
                  image: amazon/awa-cli
-                 command: 
+                 command:
                  -  sh
                  tty:  true
                  volumeMounts:
