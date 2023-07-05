@@ -1,38 +1,41 @@
-pipeleine{
-    agent{
-        kubernetes{
+pipeline{
+    agent {
+        kubernetes {
             yaml '''
-            apiVersion: v1
-            kind: Pod
-            spec:
-             containers:
-               - name: aws
-                 image: amazon/awa-cli
-                 command:
-                 -  sh
-                 tty:  true
-                 volumeMounts:
-                   - name:  shared-data
-                     mountPath:  /mnt/shared-data
+                apiVersion: v1
+                kind: Pod
+                spec: 
+                  containers:
+                    - name: aws
+                      image: amazon/aws-cli
+                      command: 
+                      - sh
+                      tty: true
+                      vloumeMounts:
+                        - name: shared-data
+                          mountPath: /mnt/shared-data
 
-                volumes:
-                  - name:  dind-storage
-                    emptyDir:  {}
-                  - name:  shared-data
-                    emptyDir:  {}
+                  volumes:
+                    - name: dind-storage
+                      emptyDir: {}
+                    - name: shared-data
+                      emptyDir: {}
 
             '''
         }
     }
     stages{
-        stage("Hello World"){
+        stage ("Helloworld"){
             steps{
-                container('aws'){      
-                sh '''
-                echo "hello my name is shruti kapoor "
-                '''  
+                container('aws'){
+                sh'''
+                echo "Hello my name is Shruti kapoor"
+                '''
                 }
             }
         }
     }
+    
 }
+
+            
