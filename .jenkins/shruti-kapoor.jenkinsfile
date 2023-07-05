@@ -2,9 +2,8 @@ pipeleine{
     agent{
         kubernetes{
             yaml '''
-
             apiVersion: v1
-            kind:Pod
+            kind: Pod
             spec:
              containers:
                - name: aws
