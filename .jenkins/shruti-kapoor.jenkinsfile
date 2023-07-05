@@ -1,12 +1,38 @@
 pipeleine{
-    agent any
+    agent{
+        kubernetes{
+            yaml '''
+
+            ApiVersion: v1
+            kind:pod
+            spec:
+             containers:
+               - name: aws
+                 image: amazon/awa-cli
+                 command: 
+                 -  sh
+                 tty:  true
+                 volumeMounts:
+                   - name:  shared-data
+                     mountPath:  /mnt/shared-data
+
+                vulumes:
+                  - name:  dind-storage
+                    emptyDir:  {}
+                  - name:  shared-data
+                    emptyDir:  {}
+
+            '''
+        }
+    }
     stages{
         stage("Hello World"){
             steps{
+                container('aws'){      
                 sh '''
-                echo "hello my name is shruti kapoor"
-                '''
-                
+                echo "hello my name is shruti kapoor "
+                '''  
+                }
             }
         }
     }
