@@ -90,9 +90,35 @@ pipeline {
     stage('Git: Clone Code') {
       steps {
         container('maven') {
-          git branch: 'main', changelog: false, poll: false, 
+
+           // http://aada482ae939d430180f1feba4d11f49-899972468.us-west-2.elb.amazonaws.com/jenkins/env-vars.html/
+
+          echo "env.JOB_NAME: ${env.JOB_NAME}"
+          echo "env.BRANCH_NAME: ${env.BRANCH_NAME}" 
+          echo "env.GIT_BRANCH: ${env.GIT_BRANCH}"
+
+          sh """
+            echo "env.JOB_NAME: ${env.JOB_NAME}"
+            export GIT_BRANCH_SHORT=\$(echo ${env.GIT_BRANCH} | sed 's/origin\\///')
+
+            printenv
+          """
+
+          git branch: "main", 
+            changelog: false, poll: false, 
             credentialsId: 'jenkins',
             url: "${GITHUB_REPO_URL}"
+
+
+          // script {
+            // GIT_COMMIT_EMAIL = sh (
+            //       // script: 'git --no-pager show -s --format=\'%ae\'',
+            //       script: 'echo $env.GIT_BRANCH'
+            //       returnStdout: true
+            //   ).trim()
+            //   echo "Git committer email: ${GIT_COMMIT_EMAIL}"
+          // }            
+      
         }
       }
     }  
@@ -105,9 +131,11 @@ pipeline {
 
             yum update -y && yum install -y git tar openssl jq 
             
+            echo "Installing kubectl ..."
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
                     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
+            echo "Installing Helm ..."
             curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
                 chmod 700 get_helm.sh && \
                 ./get_helm.sh                                
@@ -115,7 +143,6 @@ pipeline {
         }
       }
     }
-
 
     stage('AWS: Get ECR Token') {
       steps {
@@ -142,7 +169,32 @@ pipeline {
       }
     }
 
+  
+
+    stage('EKS: Get Load Balancer Hostname') {
+      steps {
+        container('aws') {
+          sh '''
+            export KUBECONFIG="$SHARED_DATA_PATH/kubeconfig"
+
+            NAMESPACE="nginx"
+            SERVICE_NAME="ingress-nginx-controller"
+
+            echo "Getting the external-IP (hostname) ..."
+            export HOST_NAME=$(kubectl get service -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            echo "HOST_NAME: $HOST_NAME"
+
+          '''
+        }
+      }
+    }
+
     stage('EKS: Deploy Hello-World using kubectl tool') {
+      when {      
+          expression {
+              return env.JOB_NAME == 'tutim-ai-hello-world';
+          }
+      }
       steps {
         container('aws') {
           sh '''
@@ -150,7 +202,6 @@ pipeline {
 
             kubectl get ns --kubeconfig $KUBECONFIG
 
-            ls -la
             K8S_DIR=".k8s/hello-world"
 
             kubectl apply -f $K8S_DIR/0-namespace.yaml  --kubeconfig $KUBECONFIG
@@ -169,8 +220,53 @@ pipeline {
       }
     }
 
+    stage('EKS: Deploy Hello-World using Helm') {
+      when {      
+          expression {
+              return env.JOB_NAME == 'tutim-ai-hello-world';
+          }
+      }
+      steps {
+        container('aws') {
+          sh '''
+            export KUBECONFIG="$SHARED_DATA_PATH/kubeconfig"
 
-    stage('EKS: Deploy App ') {
+            NAMESPACE="hello-world"
+
+            echo ""
+            echo "Using Helm to install Hello-World to namespace '$NAMESPACE'"
+            echo "-----------------------------------------------------------"
+
+            RELEASE_NAME="hello-world"
+            CHART_NAME="hello-world"
+            CHART_REPO="./helm/hello-world"
+            VALUES_FILE="k8s-install-jenkins-helm-values.yaml"
+
+            echo ""
+            echo "Installing '$CHART_NAME' in namespace '$NAMESPACE' using helm"
+            echo "-----------------------------------------------------------"
+            helm upgrade $CHART_NAME $CHART_REPO \
+                --install \
+                --create-namespace \
+                --namespace $NAMESPACE \
+                --kubeconfig $KUBECONFIG \
+                --set ingress.hosts[0].paths[0].path=/helm-hello-world \
+                --set ingress.hosts[0].paths[0].pathType=Prefix \
+                --set ingress.hosts[0].host=$HOST_NAME \
+                --set deployment.replicas=3 
+            
+            kubectl get all -n $NAMESPACE --kubeconfig $KUBECONFIG
+          '''
+        }
+      }
+    }
+
+    stage('EKS: Deploy App to EKS using Helm') {
+      when {      
+          expression {
+              return env.JOB_NAME == 'tutim-ai-main';
+          }
+      }
       steps {
         container('aws') {
           sh '''
@@ -179,16 +275,7 @@ pipeline {
 
             export KUBECONFIG="$SHARED_DATA_PATH/kubeconfig"
 
-
-
-            NAMESPACE="nginx"
-            SERVICE_NAME="ingress-nginx-controller "
-
-            # Get the external IP/hostname
-            HOST_NAME=$(kubectl get service -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-            echo "HOST_NAME: $HOST_NAME"
-
-            echo BRANCH_NAME: $BRANCH_NAME
+            echo BRANCH_NAME: ${BRANCH_NAME}
 
             if [ "$BRANCH_NAME" == "main" ]; then
                 NAMESPACE="app-production"
@@ -203,6 +290,19 @@ pipeline {
             NAMESPACE="app-production"
             FRONTEND_ENDPOINT="ai-frontend"
             FRONTEND_REPLICAS=3
+
+            case "$JOB_NAME" in 
+              'tutim-ai-main')
+                export TELEGRAM_BOT_TOKEN="6366730524:AAEjl6gBVjMT_ud_AIY5aq0HWw5a8j9A4DA"
+                ;;
+              'tutim-ai-dev')
+                export TELEGRAM_BOT_TOKEN="6338327189:AAG33JNgkI8NjSXaKcC4S7-TV0R3fNj1hho"
+                ;;
+              *)
+                echo "Unknown JOB_NAME: ${env.JOB_NAME}"
+                exit 1
+                ;;
+            esac
 
             SECRET_NAME="ecr-credentials"
             DOCKER_USERNAME="AWS"            
@@ -232,7 +332,12 @@ pipeline {
                 --set ingress.hosts[0].paths[0].backend.service.name=frontend \
                 --set ingress.hosts[0].paths[0].backend.service.port.number=80 \
                 --set services.frontend.replicas.min=$FRONTEND_REPLICAS \
-                --set services.frontend.replicas.max=$FRONTEND_REPLICAS 
+                --set services.frontend.replicas.max=$FRONTEND_REPLICAS \
+                --set services.backend.replicas.min=1 \
+                --set services.backend.replicas.max=1 \
+                --set providerCredentials.telegramBotToken=$TELEGRAM_BOT_TOKEN 
+
+          
             
             kubectl get all -n $NAMESPACE --kubeconfig $KUBECONFIG
           '''
@@ -240,55 +345,13 @@ pipeline {
       }
     }
 
-    stage('EKS: Deploy Hello-World using Helm') {
-      steps {
-        container('aws') {
-          sh '''
-            export KUBECONFIG="$SHARED_DATA_PATH/kubeconfig"
-
-            NAMESPACE="nginx"
-            SERVICE_NAME="ingress-nginx-controller "
-
-            # Get the external IP/hostname
-            HOST_NAME=$(kubectl get service -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-            echo "HOST_NAME: $HOST_NAME"
-
-
-            ls -la
-            ls -l helm
-
-            NAMESPACE="hello-world"
-
-            kubectl create namespace $NAMESPACE --kubeconfig $KUBECONFIG || true
-
-            echo ""
-            echo "Using Helm to installing another version of Hello-World"
-            echo "-----------------------------------------------------------"
-
-            RELEASE_NAME="hello-world"
-            CHART_NAME="hello-world"
-            CHART_REPO="./helm/hello-world"
-            VALUES_FILE="k8s-install-jenkins-helm-values.yaml"
-
-            echo ""
-            echo "Installing '$CHART_NAME' in namespace '$NAMESPACE' using helm"
-            echo "-----------------------------------------------------------"
-            helm upgrade $CHART_NAME $CHART_REPO \
-                --install \
-                --namespace $NAMESPACE \
-                --kubeconfig $KUBECONFIG \
-                --set ingress.hosts[0].paths[0].path=/helm-hello-world \
-                --set ingress.hosts[0].paths[0].pathType=Prefix \
-                --set ingress.hosts[0].host=$HOST_NAME \
-                --set replicaCount=3                
-            
-            kubectl get all -n $NAMESPACE --kubeconfig $KUBECONFIG
-          '''
-        }
-      }
-    }
 
     stage('EKS: Deploy Portainer') {
+      when {      
+          expression {
+              return false;
+          }
+      }
       steps {
         container('aws') {
           sh '''
@@ -463,10 +526,11 @@ pipeline {
                     //   unzip awscliv2.zip && \
                     //   sudo ./aws/install
     stage ("SSH: Deploy Code to EC2 Inatance"){
-    //    when {
-    //     branch 'main-1'
-    //   }
-    // if docker version &> /dev/null; then
+      when {      
+          expression {
+              return env.JOB_NAME == 'tutim-ai-dev';
+          }
+      }
       steps{
         container('terraform') {
           withCredentials([sshUserPrivateKey(credentialsId: "aws-ec2-keypair", keyFileVariable: 'CREDENTIALS_FILE')]) {
